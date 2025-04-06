@@ -36,27 +36,6 @@ jobs:
             --role-name receive-lambda-role \
             --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole || true
 
-      # Lambda 함수가 존재하는지 확인
-      - name: Check if Lambda exists
-        id: check_lambda
-        run: |
-          if aws lambda get-function --function-name receive-lambda-function 2>/dev/null; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
-
-      # Lambda 함수가 없으면 생성
-      - name: Create Lambda if not exists
-        if: steps.check_lambda.outputs.exists == 'false'
-        run: |
-          aws lambda create-function \
-            --function-name receive-lambda-function \
-            --runtime python3.12 \
-            --role arn:aws:iam::120569602527:role/receive-lambda-role \
-            --handler lambda_function.lambda_handler \
-            --zip-file fileb://build/lambda_function.zip
-
       # 1) Layer용 디렉터리 생성 + 라이브러리 설치
       - name: Build layer
         run: |
@@ -89,6 +68,27 @@ jobs:
           cd build
           zip -r lambda_function.zip .
           cd ..
+
+      # Lambda 함수가 존재하는지 확인
+      - name: Check if Lambda exists
+        id: check_lambda
+        run: |
+          if aws lambda get-function --function-name receive-lambda-function 2>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      # Lambda 함수가 없으면 생성
+      - name: Create Lambda if not exists
+        if: steps.check_lambda.outputs.exists == 'false'
+        run: |
+          aws lambda create-function \
+            --function-name receive-lambda-function \
+            --runtime python3.12 \
+            --role arn:aws:iam::120569602527:role/receive-lambda-role \
+            --handler lambda_function.lambda_handler \
+            --zip-file fileb://build/lambda_function.zip
 
       # 5) 업로드 전, Lambda 함수가 해당 Layer를 사용하도록 구성 업데이트
       - name: Update Lambda configuration (add layer)

@@ -39,6 +39,18 @@ layer/
 layer.zip
 build/
 *.zip
+deploy/
+deploy.zip
+package/
+package.zip
+*.dist-info/
+*.dist-info/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
 
 # Logs
 *.log
@@ -53,4 +65,14 @@ logs/
 # Coverage
 .coverage
 htmlcov/
-.pytest_cache/ 
+.pytest_cache/
+
+# AWS
+.aws/
+.aws-sam/
+samconfig.toml
+.aws-sam/
+
+# Local testing
+test_events/
+test_output/ 
