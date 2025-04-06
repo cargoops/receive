@@ -1,0 +1,111 @@
+name: Deploy Lambda with Layer
+
+on:
+  workflow_run:
+    workflows: ["Code Quality Check"]
+    types:
+      - completed
+    branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-2
+
+      # Lambda IAM 역할 생성
+      - name: Create Lambda IAM Role
+        run: |
+          aws iam create-role \
+            --role-name receive-lambda-role \
+            --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}' || true
+          
+          aws iam attach-role-policy \
+            --role-name receive-lambda-role \
+            --policy-arn arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess || true
+          
+          aws iam attach-role-policy \
+            --role-name receive-lambda-role \
+            --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole || true
+
+      # Lambda 함수가 존재하는지 확인
+      - name: Check if Lambda exists
+        id: check_lambda
+        run: |
+          if aws lambda get-function --function-name receive-lambda-function 2>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      # Lambda 함수가 없으면 생성
+      - name: Create Lambda if not exists
+        if: steps.check_lambda.outputs.exists == 'false'
+        run: |
+          aws lambda create-function \
+            --function-name receive-lambda-function \
+            --runtime python3.12 \
+            --role arn:aws:iam::120569602527:role/receive-lambda-role \
+            --handler lambda_function.lambda_handler \
+            --zip-file fileb://build/lambda_function.zip
+
+      # 1) Layer용 디렉터리 생성 + 라이브러리 설치
+      - name: Build layer
+        run: |
+          mkdir -p layer/python
+          pip install --no-cache-dir -r requirements.txt -t layer/python/lib/python3.12/site-packages
+
+      # 2) Layer 압축
+      - name: Zip layer
+        run: |
+          cd layer
+          zip -r ../layer.zip .
+          cd ..
+
+      # 3) Lambda Layer 생성/업데이트 (publish-layer-version)
+      - name: Publish layer
+        run: |
+          LAYER_VERSION=$(aws lambda publish-layer-version \
+            --layer-name receive-lambda-layer \
+            --zip-file fileb://layer.zip \
+            --compatible-runtimes python3.12 \
+            --output text \
+            --query Version)
+          echo "LAYER_VERSION=$LAYER_VERSION" >> $GITHUB_ENV
+
+      # 4) Lambda 함수 코드만 압축
+      - name: Create function zip
+        run: |
+          mkdir -p build
+          cp lambda_function.py build/
+          cd build
+          zip -r lambda_function.zip .
+          cd ..
+
+      # 5) 업로드 전, Lambda 함수가 해당 Layer를 사용하도록 구성 업데이트
+      - name: Update Lambda configuration (add layer)
+        run: |
+          aws lambda update-function-configuration \
+            --function-name receive-lambda-function \
+            --layers arn:aws:lambda:us-east-2:120569602527:layer:receive-lambda-layer:${{ env.LAYER_VERSION }}
+      
+      # Wait
+      - name: Wait until function config is updated
+        run: |
+          aws lambda wait function-updated \
+            --function-name receive-lambda-function
+      
+      # 6) 함수 코드 배포
+      - name: Deploy function code
+        run: |
+          aws lambda update-function-code \
+            --function-name receive-lambda-function \
+            --zip-file fileb://build/lambda_function.zip
