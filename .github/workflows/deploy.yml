@@ -90,6 +90,12 @@ jobs:
             --handler lambda_function.lambda_handler \
             --zip-file fileb://build/lambda_function.zip
 
+      # Lambda 함수가 활성화될 때까지 대기
+      - name: Wait for Lambda function to be active
+        run: |
+          aws lambda wait function-active \
+            --function-name receive-lambda-function
+
       # 5) 업로드 전, Lambda 함수가 해당 Layer를 사용하도록 구성 업데이트
       - name: Update Lambda configuration (add layer)
         run: |
