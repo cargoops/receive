@@ -21,6 +21,14 @@ def lambda_handler(event, context):
     Returns:
         dict: API Gateway 응답 객체 (상태 코드 및 메시지 포함)
     """
+    # CORS 헤더 설정
+    cors_headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "*",
+        "Access-Control-Allow-Headers": "*",
+        "Access-Control-Max-Age": "3600"
+    }
+
     try:
         # 쿼리 파라미터에서 패키지 ID 추출
         package_id = event["queryStringParameters"]["packageId"]
@@ -33,7 +41,11 @@ def lambda_handler(event, context):
 
         # 패키지가 존재하지 않는 경우 404 반환
         if "Item" not in response:
-            return {"statusCode": 404, "body": "Package not found"}
+            return {
+                "statusCode": 404,
+                "headers": cors_headers,
+                "body": "Package not found"
+            }
 
         # 패키지 유효성 검사 (현재는 항상 True)
         valid = True
@@ -49,7 +61,11 @@ def lambda_handler(event, context):
                     ":receiveDate": current_time,
                 },
             )
-            return {"statusCode": 200, "body": "Package status updated to readyForTQ"}
+            return {
+                "statusCode": 200,
+                "headers": cors_headers,
+                "body": "Package status updated to readyForTQ"
+            }
         else:
             # 패키지가 유효하지 않은 경우: 상태를 'receiveUnavailable'로 업데이트
             table.update_item(
@@ -63,9 +79,14 @@ def lambda_handler(event, context):
             )
             return {
                 "statusCode": 400,
-                "body": "Package status updated to receiveUnavailable",
+                "headers": cors_headers,
+                "body": "Package status updated to receiveUnavailable"
             }
 
     except Exception as e:
         # 오류 발생 시 500 에러 반환
-        return {"statusCode": 500, "body": f"Error: {str(e)}"}
+        return {
+            "statusCode": 500,
+            "headers": cors_headers,
+            "body": f"Error: {str(e)}"
+        }
