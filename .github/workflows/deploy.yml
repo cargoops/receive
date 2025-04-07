@@ -21,7 +21,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-2
 
-      # Lambda IAM 역할 생성
+      # Lambda IAM 역할 생성 (API Gateway 권한 추가)
       - name: Create Lambda IAM Role
         run: |
           aws iam create-role \
@@ -35,6 +35,11 @@ jobs:
           aws iam attach-role-policy \
             --role-name receive-lambda-role \
             --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole || true
+            
+          # API Gateway Lambda 통합을 위한 권한 추가
+          aws iam attach-role-policy \
+            --role-name receive-lambda-role \
+            --policy-arn arn:aws:iam::aws:policy/AmazonAPIGatewayInvokeFullAccess || true
 
       # 1) Layer용 디렉터리 생성 + 라이브러리 설치
       - name: Build layer
@@ -49,7 +54,7 @@ jobs:
           zip -r ../layer.zip .
           cd ..
 
-      # 3) Lambda Layer 생성/업데이트 (publish-layer-version)
+      # 3) Lambda Layer 생성/업데이트
       - name: Publish layer
         run: |
           LAYER_VERSION=$(aws lambda publish-layer-version \
@@ -96,7 +101,7 @@ jobs:
           aws lambda wait function-active \
             --function-name receive-lambda-function
 
-      # 5) 업로드 전, Lambda 함수가 해당 Layer를 사용하도록 구성 업데이트
+      # 5) Layer 구성 업데이트
       - name: Update Lambda configuration (add layer)
         run: |
           aws lambda update-function-configuration \
@@ -115,3 +120,88 @@ jobs:
           aws lambda update-function-code \
             --function-name receive-lambda-function \
             --zip-file fileb://build/lambda_function.zip
+            
+      # API Gateway가 존재하는지 확인
+      - name: Check if API Gateway exists
+        id: check_api
+        run: |
+          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='receive-api'].id" --output text)
+          if [ -n "$API_ID" ]; then
+            echo "api_id=$API_ID" >> $GITHUB_OUTPUT
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+      
+      # API Gateway가 없으면 생성
+      - name: Create API Gateway if not exists
+        if: steps.check_api.outputs.exists == 'false'
+        run: |
+          API_ID=$(aws apigateway create-rest-api \
+            --name receive-api \
+            --description "API for receive lambda function" \
+            --endpoint-configuration "types=REGIONAL" \
+            --query "id" --output text)
+          echo "api_id=$API_ID" >> $GITHUB_OUTPUT
+          
+          # 루트 리소스 ID 가져오기
+          ROOT_ID=$(aws apigateway get-resources \
+            --rest-api-id $API_ID \
+            --query "items[?path=='/'].id" --output text)
+            
+          # 리소스 생성 (/receive)
+          RESOURCE_ID=$(aws apigateway create-resource \
+            --rest-api-id $API_ID \
+            --parent-id $ROOT_ID \
+            --path-part "receive" \
+            --query "id" --output text)
+            
+          # POST 메서드 생성
+          aws apigateway put-method \
+            --rest-api-id $API_ID \
+            --resource-id $RESOURCE_ID \
+            --http-method POST \
+            --authorization-type NONE
+            
+          # Lambda 함수와 통합
+          aws apigateway put-integration \
+            --rest-api-id $API_ID \
+            --resource-id $RESOURCE_ID \
+            --http-method POST \
+            --type AWS_PROXY \
+            --integration-http-method POST \
+            --uri arn:aws:apigateway:us-east-2:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-2:120569602527:function:receive-lambda-function/invocations
+            
+          # API 배포
+          aws apigateway create-deployment \
+            --rest-api-id $API_ID \
+            --stage-name prod
+            
+          # Lambda 함수에 API Gateway 호출 권한 추가
+          aws lambda add-permission \
+            --function-name receive-lambda-function \
+            --statement-id apigateway-prod \
+            --action lambda:InvokeFunction \
+            --principal apigateway.amazonaws.com \
+            --source-arn "arn:aws:execute-api:us-east-2:120569602527:$API_ID/prod/POST/receive"
+            
+          # API Gateway 엔드포인트 출력
+          echo "API Gateway Endpoint: https://$API_ID.execute-api.us-east-2.amazonaws.com/prod/receive"
+          echo "API_ENDPOINT=https://$API_ID.execute-api.us-east-2.amazonaws.com/prod/receive" >> $GITHUB_ENV
+      
+      # API Gateway가 이미 존재하는 경우, 엔드포인트 정보 출력
+      - name: Get API Gateway Endpoint if exists
+        if: steps.check_api.outputs.exists == 'true'
+        run: |
+          API_ID=${{ steps.check_api.outputs.api_id }}
+          echo "API Gateway Endpoint: https://$API_ID.execute-api.us-east-2.amazonaws.com/prod/receive"
+          echo "API_ENDPOINT=https://$API_ID.execute-api.us-east-2.amazonaws.com/prod/receive" >> $GITHUB_ENV
+      
+      # 배포 정보 요약 출력
+      - name: Deployment Summary
+        run: |
+          echo "====== Deployment Summary ======"
+          echo "Lambda Function: receive-lambda-function"
+          echo "Layer Version: ${{ env.LAYER_VERSION }}"
+          echo "API Endpoint: ${{ env.API_ENDPOINT }}"
+          echo "==============================="
