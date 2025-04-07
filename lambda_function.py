@@ -26,7 +26,7 @@ def lambda_handler(event, context):
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "*",
         "Access-Control-Allow-Headers": "*",
-        "Access-Control-Max-Age": "3600"
+        "Access-Control-Max-Age": "3600",
     }
 
     try:
@@ -44,7 +44,7 @@ def lambda_handler(event, context):
             return {
                 "statusCode": 404,
                 "headers": cors_headers,
-                "body": "Package not found"
+                "body": "Package not found",
             }
 
         # 패키지 유효성 검사 (현재는 항상 True)
@@ -64,7 +64,7 @@ def lambda_handler(event, context):
             return {
                 "statusCode": 200,
                 "headers": cors_headers,
-                "body": "Package status updated to readyForTQ"
+                "body": "Package status updated to readyForTQ",
             }
         else:
             # 패키지가 유효하지 않은 경우: 상태를 'receiveUnavailable'로 업데이트
@@ -80,13 +80,9 @@ def lambda_handler(event, context):
             return {
                 "statusCode": 400,
                 "headers": cors_headers,
-                "body": "Package status updated to receiveUnavailable"
+                "body": "Package status updated to receiveUnavailable",
             }
 
     except Exception as e:
         # 오류 발생 시 500 에러 반환
-        return {
-            "statusCode": 500,
-            "headers": cors_headers,
-            "body": f"Error: {str(e)}"
-        }
+        return {"statusCode": 500, "headers": cors_headers, "body": f"Error: {str(e)}"}
